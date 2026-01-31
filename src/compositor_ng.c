@@ -623,12 +623,12 @@ uint64_t kms_dpms_getValue(struct drmdev *drmdev){
 
     for (int i = 0; i < n_connectors; i++) {
         if (
-        connectors->variable_state.connection_state == kConnected_DrmConnectionState ||
-        connectors->variable_state.connection_state == kUnknown_DrmConnectionState ){
+        connectors[i].variable_state.connection_state == kConnected_DrmConnectionState ||
+        connectors[i].variable_state.connection_state == kUnknown_DrmConnectionState ){
             uint32_t property_id = get_dpms_property_id(drmdev, i);
             if (property_id != DPMS_ERROR_PROPERTY_ID){
                 // Return only first value
-                result = kms_drm_getDPMSPropertyValue(drmdev, connectors->id, property_id);
+                result = kms_drm_getDPMSPropertyValue(drmdev, connectors[i].id, property_id);
                 break;
             }
         }
@@ -646,11 +646,11 @@ void kms_dpms_setValue(struct drmdev *drmdev, uint64_t value){
 
     for (int i = 0; i < n_connectors; i++) {
         if (
-        connectors->variable_state.connection_state == kConnected_DrmConnectionState ||
-        connectors->variable_state.connection_state == kUnknown_DrmConnectionState ){
+        connectors[i].variable_state.connection_state == kConnected_DrmConnectionState ||
+        connectors[i].variable_state.connection_state == kUnknown_DrmConnectionState ){
             uint32_t property_id = get_dpms_property_id(drmdev, i);
             if (property_id != DPMS_ERROR_PROPERTY_ID){
-                drmModeObjectSetProperty(drmdev->fd, connectors->id, DRM_MODE_OBJECT_CONNECTOR, property_id, value);
+                drmModeObjectSetProperty(drmdev->fd, connectors[i].id, DRM_MODE_OBJECT_CONNECTOR, property_id, value);
             }
         }
     }
