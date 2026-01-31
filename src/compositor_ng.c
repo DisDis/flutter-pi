@@ -667,7 +667,7 @@ int32_t compositor_set_dpms(struct compositor *compositor,uint64_t value){
     if (!compositor_is_available_dpms(compositor)){
         return -EINVAL;
     }
-    kms_dpms_setValue(compositor, value);
+    kms_dpms_setValue(compositor->main_window.kms.drmdev, value);
     return 0;
 }
 int32_t compositor_is_available_dpms(struct compositor *compositor){
