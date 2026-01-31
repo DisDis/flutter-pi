@@ -82,6 +82,8 @@ struct kms_req_builder {
     bool unset_mode;
     bool has_mode;
     drmModeModeInfo mode;
+    bool set_dpms_off;
+    bool is_dpms_off;
 };
 
 COMPILE_ASSERT(BITSET_SIZE(((struct kms_req_builder *) 0)->available_planes) == 128);
@@ -2332,6 +2334,30 @@ fail_unlock:
     return NULL;
 }
 
+struct kms_req *drmdev_create_dpms_off_req(struct drmdev *drmdev, uint32_t crtc_id) {
+    struct kms_req_builder *builder;
+    builder = drmdev_create_request_builder(drmdev, crtc_id);
+    if (builder == NULL){
+        return NULL;
+    }
+    builder->set_dpms_off = true;
+    // OFF
+    builder->is_dpms_off = true;
+    return kms_req_builder_build(builder);
+}
+
+struct kms_req *drmdev_create_dpms_on_req(struct drmdev *drmdev, uint32_t crtc_id) {
+    struct kms_req_builder *builder;
+    builder = drmdev_create_request_builder(drmdev, crtc_id);
+    if (builder == NULL){
+        return NULL;
+    }
+    builder->set_dpms_off = true;
+    // ON
+    builder->is_dpms_off = false;
+    return kms_req_builder_build(builder);
+}
+
 static void kms_req_builder_destroy(struct kms_req_builder *builder) {
     /// TODO: Is this complete?
     for (int i = 0; i < builder->n_layers; i++) {
@@ -2944,6 +2970,15 @@ kms_req_commit_common(struct kms_req *req, bool blocking, kms_scanout_cb_t scano
             } else {
                 drmModeAtomicAddProperty(builder->req, builder->crtc->id, builder->crtc->ids.mode_id, 0);
             }
+        }
+
+        if (builder->set_dpms_off){
+                drmModeAtomicAddProperty(
+                    builder->req, 
+                    builder->connector->id,
+                    builder->connector->ids.dpms,
+                    builder->is_dpms_off ? DRM_MODE_DPMS_OFF : DRM_MODE_DPMS_ON
+                );
         }
 
         /// TODO: If we're on raspberry pi and only have one layer, we can do an async pageflip

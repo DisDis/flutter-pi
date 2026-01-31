@@ -638,38 +638,21 @@ uint64_t kms_dpms_getValue(struct drmdev *drmdev){
 }
 
 
-void kms_dpms_setValue(struct drmdev *drmdev, uint64_t value){
-    ASSERT_NOT_NULL(drmdev);
-
-    struct drm_connector *connectors =  drmdev->connectors;
-    size_t n_connectors = drmdev->n_connectors;
-
-    for (int i = 0; i < n_connectors; i++) {
-        if (
-        connectors[i].variable_state.connection_state == kConnected_DrmConnectionState ||
-        connectors[i].variable_state.connection_state == kUnknown_DrmConnectionState ){
-            uint32_t property_id = get_dpms_property_id(drmdev, i);
-            if (property_id != DPMS_ERROR_PROPERTY_ID){
-                drmModeObjectSetProperty(drmdev->fd, connectors[i].id, DRM_MODE_OBJECT_CONNECTOR, property_id, value);
-            }
-        }
-    }
-}
-
-
-uint64_t compositor_get_dpms(struct compositor *compositor){
+// 0 => off, 1 => on, negative value => errno-style error
+int32_t compositor_get_dpms(struct compositor *compositor){
     if (!compositor_is_available_dpms(compositor)){
         return -EINVAL;
     }
-    return kms_dpms_getValue(compositor->main_window.kms.drmdev);
+    return kms_dpms_getValue(compositor->main_window.kms.drmdev) == DRM_MODE_DPMS_ON? 1 : 0;
 }
-int32_t compositor_set_dpms(struct compositor *compositor,uint64_t value){
+
+int32_t compositor_set_dpms(struct compositor *compositor,bool value){
     if (!compositor_is_available_dpms(compositor)){
         return -EINVAL;
     }
-    kms_dpms_setValue(compositor->main_window.kms.drmdev, value);
-    return 0;
+    return compositor->main_window.set_dpms(compositor->main_window, value)
 }
+
 int32_t compositor_is_available_dpms(struct compositor *compositor){
     if (compositor != NULL && compositor->main_window != NULL &&
         compositor->main_window.kms.drmdev != NULL) {
