@@ -79,6 +79,8 @@ struct kms_req_builder {
     int n_layers;
     struct kms_req_layer layers[32];
 
+    bool is_dpms_req;
+    bool dpms_on;
     bool unset_mode;
     bool has_mode;
     drmModeModeInfo mode;
@@ -423,6 +425,12 @@ static int fetch_crtc(int drm_fd, int crtc_index, uint32_t crtc_id, struct drm_c
     crtc_out->index = crtc_index;
     crtc_out->bitmask = 1u << crtc_index;
     crtc_out->ids = ids;
+    crtc_out->committed_state.active = crtc->mode_valid;
+    for (uint32_t i = 0; i < props->count_props; i++) {
+        if (props->props[i] == ids.active) {
+            crtc_out->committed_state.active = props->prop_values[i] != 0;
+        }
+    }
     crtc_out->committed_state.has_mode = crtc->mode_valid;
     crtc_out->committed_state.mode = crtc->mode;
     crtc_out->committed_state.mode_blob = NULL;
@@ -1233,6 +1241,10 @@ int drmdev_get_fd(struct drmdev *drmdev) {
 int drmdev_get_event_fd(struct drmdev *drmdev) {
     ASSERT_NOT_NULL(drmdev);
     return drmdev->master_fd;
+}
+
+bool drmdev_supports_dpms(struct drmdev *drmdev, const struct drm_crtc *crtc, const struct drm_connector *connector) {
+    return drmdev->supports_atomic_modesetting ? crtc->ids.active != 0 : connector->ids.dpms != 0;
 }
 
 bool drmdev_supports_dumb_buffers(struct drmdev *drmdev) {
@@ -2273,6 +2285,7 @@ struct kms_req_builder *drmdev_create_request_builder(struct drmdev *drmdev, uin
 
     if (crtc == NULL) {
         LOG_ERROR("Invalid CRTC id: %" PRId32 "\n", crtc_id);
+        errno = EINVAL;
         goto fail_unlock;
     }
 
@@ -2288,9 +2301,6 @@ struct kms_req_builder *drmdev_create_request_builder(struct drmdev *drmdev, uin
         if (req == NULL) {
             goto fail_free_builder;
         }
-
-        // set the CRTC to active
-        drmModeAtomicAddProperty(req, crtc->id, crtc->ids.active, 1);
     } else {
         req = NULL;
     }
@@ -2322,6 +2332,8 @@ struct kms_req_builder *drmdev_create_request_builder(struct drmdev *drmdev, uin
     builder->n_layers = 0;
     builder->has_mode = false;
     builder->unset_mode = false;
+    builder->is_dpms_req = false;
+    builder->dpms_on = true;
     return builder;
 
 fail_free_builder:
@@ -2330,6 +2342,33 @@ fail_free_builder:
 fail_unlock:
     drmdev_unlock(drmdev);
     return NULL;
+}
+
+struct kms_req *drmdev_create_dpms_req(struct drmdev *drmdev, uint32_t crtc_id, uint32_t connector_id, bool enabled) {
+    struct kms_req_builder *builder;
+    struct kms_req *req;
+    int ok;
+
+    builder = drmdev_create_request_builder(drmdev, crtc_id);
+    if (builder == NULL) {
+        return NULL;
+    }
+
+    ok = kms_req_builder_set_connector(builder, connector_id);
+    if (ok == 0 && (builder->use_legacy ? builder->connector->ids.dpms == 0 : builder->crtc->ids.active == 0)) {
+        ok = ENOTSUP;
+    }
+    if (ok != 0) {
+        kms_req_builder_unref(builder);
+        errno = ok;
+        return NULL;
+    }
+
+    builder->is_dpms_req = true;
+    builder->dpms_on = enabled;
+    req = kms_req_builder_build(builder);
+    kms_req_builder_unref(builder);
+    return req;
 }
 
 static void kms_req_builder_destroy(struct kms_req_builder *builder) {
@@ -2784,6 +2823,40 @@ kms_req_commit_common(struct kms_req *req, bool blocking, kms_scanout_cb_t scano
         goto fail_unlock;
     }
 
+    if (builder->is_dpms_req) {
+        // A disabled CRTC produces no page-flip event. Do not enter the normal
+        // scanout path or replace last_flipped: its buffers remain attached.
+        if (!blocking) {
+            ok = ENOTSUP;
+            goto fail_unlock;
+        }
+        if (builder->use_legacy) {
+            ok = drmModeConnectorSetProperty(
+                builder->drmdev->master_fd,
+                builder->connector->id,
+                builder->connector->ids.dpms,
+                builder->dpms_on ? DRM_MODE_DPMS_ON : DRM_MODE_DPMS_OFF
+            );
+        } else {
+            ok = drmModeAtomicAddProperty(builder->req, builder->crtc->id, builder->crtc->ids.active, builder->dpms_on);
+            if (ok < 0) {
+                ok = -ok;
+                goto fail_unlock;
+            }
+            ok = drmModeAtomicCommit(builder->drmdev->master_fd, builder->req, DRM_MODE_ATOMIC_ALLOW_MODESET, NULL);
+        }
+        if (ok != 0) {
+            ok = errno;
+            goto fail_unlock;
+        }
+        builder->crtc->committed_state.active = builder->dpms_on;
+        if (scanout_cb != NULL) {
+            scanout_cb(builder->drmdev, 0, userdata);
+        }
+        drmdev_unlock(builder->drmdev);
+        return 0;
+    }
+
     // only change the mode if the new mode differs from the old one
 
     /// TOOD: If this is not a standard mode reported by connector/CRTC,
@@ -2816,6 +2889,18 @@ kms_req_commit_common(struct kms_req *req, bool blocking, kms_scanout_cb_t scano
     }
 
     if (builder->use_legacy) {
+        if (!builder->crtc->committed_state.active && builder->connector != NULL && builder->connector->ids.dpms != 0) {
+            ok = drmModeConnectorSetProperty(
+                builder->drmdev->master_fd,
+                builder->connector->id,
+                builder->connector->ids.dpms,
+                DRM_MODE_DPMS_ON
+            );
+            if (ok != 0) {
+                ok = errno;
+                goto fail_maybe_destroy_mode_blob;
+            }
+        }
         ASSERT_EQUALS(builder->layers[0].layer.dst_x, 0);
         ASSERT_EQUALS(builder->layers[0].layer.dst_y, 0);
         ASSERT_EQUALS(builder->layers[0].layer.dst_w, builder->mode.hdisplay);
@@ -2915,9 +3000,17 @@ kms_req_commit_common(struct kms_req *req, bool blocking, kms_scanout_cb_t scano
         /// TODO: Call drmModeSetPlane for all other layers
         /// TODO: Assert here
     } else {
+        // Every frame request implicitly enables the display. Power-only
+        // requests take the separate path above and never add framebuffer layers.
+        ok = drmModeAtomicAddProperty(builder->req, builder->crtc->id, builder->crtc->ids.active, !builder->unset_mode);
+        if (ok < 0) {
+            ok = -ok;
+            goto fail_maybe_destroy_mode_blob;
+        }
         /// TODO: If we can do explicit fencing, don't use the page flip event.
         /// TODO: Can we set OUT_FENCE_PTR even though we didn't set any IN_FENCE_FDs?
-        flags = DRM_MODE_PAGE_FLIP_EVENT | (blocking ? 0 : DRM_MODE_ATOMIC_NONBLOCK) | (update_mode ? DRM_MODE_ATOMIC_ALLOW_MODESET : 0);
+        flags = DRM_MODE_PAGE_FLIP_EVENT | (blocking ? 0 : DRM_MODE_ATOMIC_NONBLOCK) |
+                ((update_mode || !builder->crtc->committed_state.active) ? DRM_MODE_ATOMIC_ALLOW_MODESET : 0);
 
         // All planes that are not used by us and are connected to our CRTC
         // should be disabled.
@@ -2988,6 +3081,7 @@ kms_req_commit_common(struct kms_req *req, bool blocking, kms_scanout_cb_t scano
     }
 
     // update struct drm_crtc.committed_state
+    builder->crtc->committed_state.active = !builder->unset_mode;
     if (update_mode) {
         // destroy the old mode blob
         if (builder->crtc->committed_state.mode_blob != NULL) {
