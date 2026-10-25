@@ -71,6 +71,9 @@ both cancel/dispose orderings, replacement subscriptions, rapid disposal,
 pending-channel shutdown and pipeline teardown ordering. The notifier tests
 check initial-value synchronization and immediate self-unsubscription.
 
+For runnable hardware commands, see the
+[OpenGL video benchmark guide](video-benchmarks.md).
+
 Mocks cannot reproduce a Mesa crash or validate display scanout. For hardware
 acceptance, preserve the installed runtime and compare separate baseline and
 candidate release binaries with the same engine, application bundle, original

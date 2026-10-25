@@ -416,7 +416,8 @@ of the flutter app you're trying to run.
 ### gstreamer video player
 
 See [video frame lifetime, cancellation and regression tests](docs/video-player-lifecycle.md)
-for overlapping-player and cleanup behavior.
+for overlapping-player and cleanup behavior, and the
+[OpenGL video benchmark guide](docs/video-benchmarks.md) for hardware verification.
 Gstreamer video player is a newer video player based on gstreamer.
 
 To use the gstreamer video player, just rebuild flutter-pi (delete your build folder and reconfigure) and make sure the necessary gstreamer packages are installed. (See [dependencies](#dependencies))
