@@ -929,6 +929,11 @@ DECLARE_REF_OPS(kms_req);
  */
 struct kms_req *kms_req_builder_build(struct kms_req_builder *builder);
 
+/**
+ * Discard the queued frame for this CRTC and wait for its outstanding flip
+ * before committing the request. Frame requests also wait for their own flip;
+ * power-only requests produce no flip and return a zero vblank timestamp.
+ */
 int kms_req_commit_blocking(struct kms_req *req, uint64_t *vblank_ns_out);
 
 int kms_req_commit_nonblocking(struct kms_req *req, kms_scanout_cb_t scanout_cb, void *userdata, void_callback_t destroy_cb);

@@ -2843,10 +2843,6 @@ kms_req_commit_locked(struct kms_req *req, bool blocking, kms_scanout_cb_t scano
     ASSERT_NOT_NULL(req);
     builder = (struct kms_req_builder *) req;
 
-    if (builder->drmdev->per_crtc_state[builder->crtc->index].flip_pending) {
-        return EBUSY;
-    }
-
     if (builder->drmdev->master_fd < 0) {
         LOG_ERROR("Commit requested, but drmdev doesn't have a DRM master fd right now.\n");
         ok = EBUSY;
@@ -2859,13 +2855,29 @@ kms_req_commit_locked(struct kms_req *req, bool blocking, kms_scanout_cb_t scano
         goto fail_unlock;
     }
 
+    if (builder->is_dpms_req && !blocking) {
+        return ENOTSUP;
+    }
+
+    if (blocking) {
+        // A blocking update supersedes the queued frame. Drop it before
+        // draining so the flip handler cannot submit it and enable the CRTC
+        // after a power change.
+        kms_req_swap_ptrs(&builder->drmdev->per_crtc_state[builder->crtc->index].queued, NULL);
+        while (builder->drmdev->per_crtc_state[builder->crtc->index].flip_pending) {
+            ok = drmdev_on_modesetting_fd_ready_locked(builder->drmdev);
+            if (ok != 0) {
+                LOG_ERROR("Could not drain page flips before blocking commit.\n");
+                goto fail_unlock;
+            }
+        }
+    } else if (builder->drmdev->per_crtc_state[builder->crtc->index].flip_pending) {
+        return EBUSY;
+    }
+
     if (builder->is_dpms_req) {
         // A disabled CRTC produces no page-flip event. Do not enter the normal
         // scanout path or replace last_flipped: its buffers remain attached.
-        if (!blocking) {
-            ok = ENOTSUP;
-            goto fail_unlock;
-        }
         if (builder->use_legacy) {
             ok = drmModeConnectorSetProperty(
                 builder->drmdev->master_fd,
@@ -2889,7 +2901,6 @@ kms_req_commit_locked(struct kms_req *req, bool blocking, kms_scanout_cb_t scano
         if (scanout_cb != NULL) {
             scanout_cb(builder->drmdev, 0, userdata);
         }
-        drmdev_unlock(builder->drmdev);
         return 0;
     }
 

@@ -70,6 +70,7 @@ target_compile_options(kms_present_test PRIVATE -UNDEBUG -ffunction-sections -fd
 target_link_options(kms_present_test PRIVATE -Wl,--gc-sections)
 target_link_libraries(kms_present_test PRIVATE PkgConfig::DRM PkgConfig::GBM Threads::Threads m)
 add_test(kms_present_test kms_present_test)
+set_tests_properties(kms_present_test PROPERTIES TIMEOUT 30)
 
 
 # dpms_test includes modesetting.c/window.c to exercise their private state with
@@ -92,3 +93,4 @@ target_link_options(dpms_test PRIVATE
     -Wl,--wrap=drmHandleEvent
 )
 add_test(dpms_test dpms_test)
+set_tests_properties(dpms_test PROPERTIES TIMEOUT 30)
